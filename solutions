@@ -1,0 +1,188 @@
+create database sm_profiles
+;
+
+
+
+CREATE TABLE accounts (
+	id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	username VARCHAR(30) UNIQUE NOT NULL,
+	password VARCHAR(30) NOT NULL,
+	email VARCHAR(50) NOT NULL,
+	gender CHAR(1) NOT NULL, CHECK (gender IN ('F', 'M')),
+	age INT NOT NULL,
+	job_title VARCHAR(40) NOT NULL,
+	ip VARCHAR(30) NOT NULL
+);
+
+CREATE TABLE addresses (
+	id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	street VARCHAR(30) NOT NULL,
+	town VARCHAR(30) NOT NULL,
+	country VARCHAR(30) NOT NULL,
+	account_id INT NOT NULL REFERENCES accounts ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE photos (
+	id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	description TEXT,
+	capture_date TIMESTAMP NOT NULL,
+	views INT DEFAULT 0 NOT NULL, CHECK (views >= 0)
+);
+
+CREATE TABLE comments (
+	id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	content VARCHAR(255) NOT NULL,
+	published_on TIMESTAMP NOT NULL,
+	photo_id INT NOT NULL REFERENCES photos ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE accounts_photos (
+	account_id INT NOT NULL REFERENCES accounts ON UPDATE CASCADE ON DELETE CASCADE,
+	photo_id INT NOT NULL REFERENCES photos ON UPDATE CASCADE ON DELETE CASCADE,
+	CONSTRAINT pk_accounts_photos PRIMARY KEY (account_id, photo_id)
+);
+
+CREATE TABLE likes (
+	id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	photo_id INT NOT NULL REFERENCES photos ON UPDATE CASCADE ON DELETE CASCADE,
+	account_id INT NOT NULL REFERENCES accounts ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+
+
+INSERT INTO addresses (street, town, country, account_id)
+SELECT
+	username,
+	password,
+	ip,
+	age
+FROM accounts
+WHERE gender = 'F'
+;
+
+
+
+UPDATE addresses
+SET country = (
+	CASE
+		WHEN country LIKE 'B%' THEN 'Blocked'
+		WHEN country LIKE 'T%' THEN 'Test'
+		WHEN country LIKE 'P%' THEN 'In Progress'
+		ELSE country
+	END
+);
+
+
+
+DELETE FROM addresses
+WHERE id % 2 = 0 AND LOWER(street) LIKE '%r%'
+;
+
+
+
+drop database sm_profiles with (force)
+;
+
+create database sm_profiles
+;
+
+
+
+SELECT
+	username,
+	gender,
+	age
+FROM accounts
+WHERE age >= 18 AND LENGTH(username) > 9
+ORDER BY age DESC, username
+;
+
+
+
+SELECT
+	ph.id AS photo_id,
+	ph.capture_date,
+	ph.description,
+	COUNT(cm.id) AS comments_count
+FROM photos AS ph
+	JOIN comments AS cm
+		ON cm.photo_id = ph.id
+WHERE ph.description IS NOT NULL
+GROUP BY ph.id, ph.capture_date, ph.description
+ORDER BY comments_count DESC, photo_id
+LIMIT 3
+;
+
+
+
+SELECT 
+	CONCAT (acc.id, ' ', acc.username) AS id_username,
+	acc.email
+FROM accounts AS acc
+	JOIN accounts_photos as accph
+		ON accph.account_id = acc.id
+WHERE accph.account_id = accph.photo_id
+ORDER BY acc.id
+;
+
+
+
+SELECT
+	ph.id AS photo_id,
+	COUNT (DISTINCT l.id) AS likes_count,
+	COUNT (DISTINCT c.id) AS comments_count
+FROM photos AS ph
+	LEFT JOIN likes AS l ON l.photo_id = ph.id
+		LEFT JOIN comments AS c ON c.photo_id = ph.id
+GROUP BY ph.id
+ORDER BY likes_count DESC, comments_count DESC, photo_id
+;
+
+
+
+SELECT
+	CONCAT (SUBSTRING(description, 1, 10), '...') AS summary,
+	TO_CHAR (capture_date, 'DD.MM HH24:MI') AS date
+FROM photos
+WHERE EXTRACT (day FROM capture_date) = '10'
+ORDER BY capture_date DESC
+;
+
+
+
+CREATE OR REPLACE FUNCTION udf_accounts_photos_count(account_username VARCHAR(30)) 
+RETURNS INT
+AS $$
+	DECLARE photos_count INT;
+	BEGIN
+		SELECT
+			COUNT (ph.id) INTO photos_count
+			FROM photos AS ph
+				JOIN accounts_photos AS accph ON accph.photo_id = ph.id
+					JOIN accounts AS acc ON acc.id = accph.account_id
+			WHERE acc.username = account_username;
+			RETURN photos_count;
+	END;
+$$
+LANGUAGE
+plpgsql
+;
+
+
+
+CREATE OR REPLACE PROCEDURE udp_modify_account(address_street VARCHAR(30), address_town VARCHAR(30))
+AS $$
+	BEGIN
+		UPDATE accounts
+		SET job_title = CONCAT ('(Remote)', ' ', job_title)
+		WHERE id IN
+			(SELECT
+				act.id
+			FROM accounts AS act
+				JOIN addresses AS adr
+					ON adr.account_id = act.id
+			WHERE adr.street = address_street AND adr.town = address_town);
+	END;
+$$
+LANGUAGE plpgsql
+;
